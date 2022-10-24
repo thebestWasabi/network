@@ -3,25 +3,52 @@ package edu.javacourse.net;
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Properties;
 
 public class Server {
 
     public static void main(String[] args) throws IOException, InterruptedException {
-        ServerSocket socket = new ServerSocket(25225, 2000);
+        ServerSocket socket = new ServerSocket(25225, 200);
+        Map<String, Greetable> handlers = loadHandlers();
 
         System.out.println("Server is started");
         while (true) {
             Socket client = socket.accept();
-            new SimpleServer(client).start();
+            new SimpleServer(client, handlers).start();
         }
+    }
+
+    private static Map<String, Greetable> loadHandlers() {
+        Map<String, Greetable> result = new HashMap<>();
+
+        try (InputStream inputStream = Server.class.getClassLoader().getResourceAsStream("server.properties")) {
+            Properties properties = new Properties();
+            properties.load(inputStream);
+
+            for (Object command : properties.keySet()) {
+                String className = properties.getProperty(command.toString());
+                Class<Greetable> aClass = (Class<Greetable>) Class.forName(className);
+                Greetable handler = aClass.getConstructor().newInstance();
+                result.put(command.toString(), handler);
+            }
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            throw new RuntimeException(ex);
+        }
+        return result;
     }
 }
 
 class SimpleServer extends Thread {
     private Socket client;
+    private Map<String, Greetable> handlers;
 
-    public SimpleServer(Socket client) {
+    public SimpleServer(Socket client, Map<String, Greetable> handlers) {
         this.client = client;
+        this.handlers = handlers;
     }
 
     @Override
@@ -31,10 +58,10 @@ class SimpleServer extends Thread {
 
     private void handleRequest() {
         try {
-            BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(client.getInputStream()));
-            BufferedWriter bufferedWriter = new BufferedWriter(new OutputStreamWriter(client.getOutputStream()));
+            BufferedReader reader = new BufferedReader(new InputStreamReader(client.getInputStream()));
+            BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(client.getOutputStream()));
 
-            String request = bufferedReader.readLine();
+            String request = reader.readLine();
             String[] lines = request.split("\\s+");
             String command = lines[0];
             String userName = lines[1];
@@ -42,30 +69,24 @@ class SimpleServer extends Thread {
             System.out.println("Server got string 2: " + userName);
 
             String response = buildResponse(command, userName);
-            bufferedWriter.write(response);
-            bufferedWriter.newLine();
-            bufferedWriter.flush();
+            writer.write(response);
+            writer.newLine();
+            writer.flush();
 
-            bufferedReader.close();
-            bufferedWriter.close();
+            reader.close();
+            writer.close();
             client.close();
+
         } catch (Exception ex) {
             ex.printStackTrace(System.out);
         }
     }
 
     private String buildResponse(String command, String userName) {
-        switch (command) {
-            case "HELLO":
-                return "Hello, " + userName;
-            case "MORNING":
-                return "Good morning, " + userName;
-            case "DAY":
-                return "Good day, " + userName;
-            case "EVENING":
-                return "Good evening, " + userName;
-            default:
-                return "Hi, " + userName;
+        Greetable handler = handlers.get(command);
+        if (handler != null) {
+            return handler.buildResponse(userName);
         }
+        return "Hello, " + userName;
     }
 }
